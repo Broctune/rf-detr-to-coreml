@@ -3,6 +3,9 @@ Monkey-patches for coremltools bugs that block RF-DETR conversion.
 
 Bug 1: _cast() does `dtype(x.val)` where x.val is a shape-(1,) numpy array.
 Bug 2: view() can't handle shape list with non-scalar Var elements.
+Bug 3: meshgrid() rejects rank-2 constant inputs (e.g. shape (N,1)) that
+       are semantically 1D. coremltools 9.0 tightened the check to `rank > 1`
+       but its own constant folding can reshape 1D inputs to (N,1).
 """
 
 import logging
@@ -103,9 +106,49 @@ def apply_coremltools_patches() -> None:
     try:
         from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
         for alias in ["view", "view_copy", "_unsafe_view", "reshape"]:
-            if alias in _TORCH_OPS_REGISTRY:
+            if hasattr(_TORCH_OPS_REGISTRY, 'set_func_by_name'):
+                _TORCH_OPS_REGISTRY.set_func_by_name(patched_view, alias)
+            elif alias in _TORCH_OPS_REGISTRY:
                 _TORCH_OPS_REGISTRY[alias] = patched_view
     except ImportError:
         pass
 
     logger.info("Patched coremltools view op")
+
+    # --- Patch 3: meshgrid (non-1D constant inputs in coremltools >=9.0) ---
+    # coremltools 9.0 rejects meshgrid inputs with rank > 1, but its own
+    # constant folding can turn shape-(N,) into shape-(N,1). We squeeze
+    # the constant inputs back to 1D before they reach the check.
+    try:
+        from coremltools.converters.mil.frontend.torch.ops import _TORCH_OPS_REGISTRY
+
+        original_meshgrid_ref = [None]
+
+        def patched_meshgrid(context, node):
+            inputs = _get_inputs(context, node, expected=[1, 2])
+            tensor_inputs = inputs[0]
+            if any(t.rank > 1 for t in tensor_inputs):
+                for i, t in enumerate(tensor_inputs):
+                    if t.rank > 1 and t.can_be_folded_to_const():
+                        squeezed_val = t.val.flatten()
+                        new_const = mb.const(val=squeezed_val, name=node.name + f"_sq{i}")
+                        context.add(new_const, t.name)
+                        tensor_inputs[i] = new_const
+            original_meshgrid_ref[0](context, node)
+
+        if hasattr(_TORCH_OPS_REGISTRY, 'get_func'):
+            original_meshgrid_ref[0] = _TORCH_OPS_REGISTRY.get_func("meshgrid")
+        elif hasattr(_TORCH_OPS_REGISTRY, '__getitem__'):
+            original_meshgrid_ref[0] = _TORCH_OPS_REGISTRY["meshgrid"]
+
+        if original_meshgrid_ref[0] is not None:
+            if hasattr(_TORCH_OPS_REGISTRY, 'set_func_by_name'):
+                _TORCH_OPS_REGISTRY.set_func_by_name(patched_meshgrid, 'meshgrid')
+                _TORCH_OPS_REGISTRY.set_func_by_name(patched_meshgrid, 'meshgrid.indexing')
+            else:
+                _TORCH_OPS_REGISTRY["meshgrid"] = patched_meshgrid
+                if "meshgrid.indexing" in _TORCH_OPS_REGISTRY:
+                    _TORCH_OPS_REGISTRY["meshgrid.indexing"] = patched_meshgrid
+            logger.info("Patched coremltools meshgrid op")
+    except (ImportError, KeyError):
+        pass
