@@ -195,6 +195,23 @@ Internal steps:
 5. `coremltools.convert` to mlprogram
 6. Save as `.mlpackage`
 
+## Web Demo
+
+`webapp/` is a small local web app: pick a model (Atto, Femto, Pico, Nano, Small, Medium, XL or 2XL), upload an image, and see the detections drawn on it. It runs the PyTorch models (MPS on Apple Silicon), not the exported CoreML ones, and needs no Roboflow API key.
+
+```bash
+uv venv webapp/.venv --python 3.12
+uv pip install --python webapp/.venv/bin/python -r webapp/requirements.txt
+webapp/.venv/bin/python webapp/download_models.py     # all 8 models, ~2.3 GB into webapp/models/
+webapp/.venv/bin/python -m uvicorn server:app --app-dir webapp --host 127.0.0.1 --port 8000
+```
+
+Then open http://127.0.0.1:8000. To fetch only some models: `download_models.py atto nano`.
+
+Atto, Femto, Pico, XL and 2XL come from the `rfdetr_plus` package (installed by `rfdetr[plus]`) under the Platform Model License 1.0. They download and run without an API key, but the license requires a Roboflow platform plan (free or paid) in good standing. Nano, Small and Medium are Apache-2.0.
+
+The web app uses its **own venv** (`webapp/.venv`, latest rfdetr). Keep it separate from the CoreML export environment: rfdetr 1.9+ reorganised the modules the export patches depend on, so the export still needs rfdetr 1.5–1.6.
+
 ## Project Structure
 
 ```
@@ -215,6 +232,11 @@ rf-detr-to-coreml/
 │   ├── test_batch2.py          # Batch=2 export + throughput benchmark
 │   ├── test_batch2_gpu.py      # Batch=1 vs batch=2 with GPU utilization monitoring
 │   └── validate_coreml.swift   # Native Swift/CoreML + MLComputePlan analysis
+├── webapp/                     # Local detection web demo (own venv, latest rfdetr)
+│   ├── server.py               # FastAPI app: /api/models, /api/detect
+│   ├── models.py               # Model registry, weights dir (RF_HOME)
+│   ├── download_models.py      # Pre-download model weights
+│   └── static/index.html       # Single-page UI (no build step)
 ├── export_coreml.py            # Convenience script (calls cli.main())
 ├── pyproject.toml              # pip install config
 ├── requirements.txt            # Pinned dependency versions (optional)
