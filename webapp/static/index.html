@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RF-DETR detection demo</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f5f7; --panel: #ffffff; --line: #dfe2e8; --text: #16181d; --muted: #667085;
+    --accent: #5b3df5; --accent-text: #ffffff; --stage: #e9ebef; --error: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #181b21; --line: #2a2e37; --text: #eceef2; --muted: #98a1b0;
+      --accent: #8f7bff; --accent-text: #0f1115; --stage: #0a0c0f; --error: #ff7b72;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .spacer { flex: 1; }
+
+  .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 2px; background: var(--bg); }
+  .segmented button {
+    all: unset; cursor: pointer; padding: 5px 14px; border-radius: 7px; text-align: center;
+    font-weight: 600; color: var(--muted);
+  }
+  .segmented button small { display: block; font-weight: 400; font-size: 11px; opacity: 0.85; }
+  .segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+  .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .segmented button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .slider { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .slider input { width: 160px; accent-color: var(--accent); }
+  .slider output { color: var(--text); font-variant-numeric: tabular-nums; min-width: 3ch; font-weight: 600; }
+
+  .btn {
+    cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    padding: 7px 14px; border-radius: 8px; font: inherit; font-weight: 600;
+  }
+  .btn:hover { border-color: var(--accent); }
+
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr); }
+  @media (max-width: 800px) {
+    html, body { height: auto; overflow: auto; }
+    main { grid-template-columns: 1fr; grid-template-rows: 60vh auto; }
+  }
+
+  #stage {
+    position: relative; min-height: 0; background: var(--stage); overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #stage.dragover::after {
+    content: "Drop to detect"; position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: 14px;
+    display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none;
+  }
+  canvas { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+  #stage.has-image canvas { display: block; }
+  #empty { text-align: center; color: var(--muted); padding: 24px; cursor: pointer; }
+  #empty strong { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
+  #stage.has-image #empty { display: none; }
+  #busy {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: none;
+    background: rgba(0, 0, 0, 0.72); color: #fff; padding: 6px 14px; border-radius: 999px; font-weight: 600;
+  }
+  #stage.busy #busy { display: block; }
+
+  aside {
+    background: var(--panel); border-left: 1px solid var(--line); padding: 16px; overflow-y: auto; min-height: 0;
+  }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .stat { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .stat span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat b { font-size: 15px; font-variant-numeric: tabular-nums; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 16px 0 6px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  #detections li { cursor: default; }
+  #detections li:hover { background: var(--bg); }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .num { color: var(--muted); }
+  #message { color: var(--muted); }
+  #license { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .segmented button[data-license="PML-1.0"] small::after { content: " · PML"; }
+  .segmented { flex-wrap: wrap; }
+  #message.error { color: var(--error); }
+</style>
+</head>
+<body>
+<header>
+  <h1>RF-DETR detection</h1>
+  <div class="segmented" id="models" role="group" aria-label="Model"></div>
+  <label class="slider">Confidence
+    <input type="range" id="threshold" min="0.1" max="0.95" step="0.01" value="0.5">
+    <output id="thresholdValue">50%</output>
+  </label>
+  <div class="spacer"></div>
+  <button class="btn" id="pick" type="button">Choose image…</button>
+  <input type="file" id="file" accept="image/*" hidden>
+</header>
+
+<main>
+  <section id="stage">
+    <div id="empty"><strong>Drop an image here</strong>or click to choose one. It is processed locally on this machine.</div>
+    <canvas id="canvas"></canvas>
+    <div id="busy">Detecting…</div>
+  </section>
+  <aside>
+    <div class="stats">
+      <div class="stat"><span>Model</span><b id="sModel">–</b></div>
+      <div class="stat"><span>Device</span><b id="sDevice">–</b></div>
+      <div class="stat"><span>Inference</span><b id="sTime">–</b></div>
+      <div class="stat"><span>Objects</span><b id="sCount">–</b></div>
+    </div>
+    <p id="license" hidden>This model is under the Platform Model License 1.0: it needs a Roboflow platform plan in good standing.</p>
+    <p id="message">Upload an image to see what the model finds.</p>
+    <div id="results" hidden>
+      <h2>Classes</h2>
+      <ul id="classes"></ul>
+      <h2>Detections</h2>
+      <ul id="detections"></ul>
+    </div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  const SERVER_THRESHOLD = 0.1; // fetch low once, filter client-side with the slider
+  const PALETTE = ["#ff5a5f", "#2ec4b6", "#ffb400", "#5b8def", "#b56bff", "#7bd148",
+                   "#ff8a3d", "#00b8d9", "#f15bb5", "#c0ca33", "#8d99ae", "#e63946"];
+
+  const $ = (id) => document.getElementById(id);
+  const stage = $("stage"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+  const state = { model: null, models: {}, file: null, image: null, result: null, hover: -1, request: 0 };
+
+  const colorFor = (label) => {
+    let h = 0;
+    for (const ch of label) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    return PALETTE[h % PALETTE.length];
+  };
+  const threshold = () => parseFloat($("threshold").value);
+  const visible = () => (state.result ? state.result.detections.filter((d) => d.confidence >= threshold()) : []);
+  const pct = (v) => Math.round(v * 100) + "%";
+
+  function setMessage(text, isError = false) {
+    $("message").textContent = text;
+    $("message").classList.toggle("error", isError);
+    $("message").hidden = !text;
+  }
+
+  // ---- drawing -------------------------------------------------------------
+  function draw() {
+    const img = state.image;
+    if (!img) return;
+    const pad = 16;
+    const availW = stage.clientWidth - pad * 2, availH = stage.clientHeight - pad * 2;
+    const scale = Math.min(availW / img.width, availH / img.height);
+    const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(img, 0, 0, w, h);
+    if (!state.result) return;
+
+    // Boxes are in the server's (EXIF-corrected) pixel space.
+    const sx = w / state.result.width, sy = h / state.result.height;
+    const dets = visible();
+    ctx.font = "600 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.textBaseline = "middle";
+    // Draw low-confidence first so the strongest boxes and the hovered one end up on top.
+    const order = dets.map((_, i) => i).reverse();
+    if (state.hover >= 0 && state.hover < dets.length) order.push(order.splice(order.indexOf(state.hover), 1)[0]);
+    for (const i of order) {
+      const d = dets[i], color = colorFor(d.label), hovered = i === state.hover;
+      const x = d.box[0] * sx, y = d.box[1] * sy, bw = (d.box[2] - d.box[0]) * sx, bh = (d.box[3] - d.box[1]) * sy;
+      if (hovered) { ctx.fillStyle = color + "33"; ctx.fillRect(x, y, bw, bh); }
+      ctx.lineWidth = hovered ? 3.5 : 2;
+      ctx.strokeStyle = color;
+      ctx.strokeRect(x, y, bw, bh);
+      const text = `${d.label} ${pct(d.confidence)}`;
+      const tw = ctx.measureText(text).width + 10, th = 18;
+      const tx = Math.max(0, Math.min(x - 1, w - tw));
+      const ty = y - th >= 0 ? y - th : y; // tag above the box, or inside it at the top edge
+      ctx.fillStyle = color;
+      ctx.fillRect(tx, ty, tw, th);
+      ctx.fillStyle = "#101114";
+      ctx.fillText(text, tx + 5, ty + th / 2 + 0.5);
+    }
+  }
+
+  // ---- side panel ----------------------------------------------------------
+  function renderPanel() {
+    const r = state.result;
+    $("results").hidden = !r;
+    if (!r) return;
+    const dets = visible();
+    $("sModel").textContent = r.label;
+    $("sDevice").textContent = r.device.toUpperCase();
+    $("sTime").textContent = Math.round(r.inference_ms) + " ms";
+    $("sCount").textContent = dets.length;
+    setMessage(dets.length ? "" : `Nothing at or above ${pct(threshold())}. Try lowering the confidence slider.`);
+
+    const counts = new Map();
+    for (const d of dets) counts.set(d.label, (counts.get(d.label) || 0) + 1);
+    const classes = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    $("classes").replaceChildren(...classes.map(([label, n]) => row(label, "×" + n)));
+    $("detections").replaceChildren(...dets.map((d, i) => {
+      const li = row(d.label, pct(d.confidence));
+      li.addEventListener("mouseenter", () => { state.hover = i; draw(); });
+      li.addEventListener("mouseleave", () => { state.hover = -1; draw(); });
+      return li;
+    }));
+  }
+
+  function row(label, value) {
+    const li = document.createElement("li");
+    const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = colorFor(label);
+    const name = document.createElement("span"); name.className = "name"; name.textContent = label;
+    const num = document.createElement("span"); num.className = "num"; num.textContent = value;
+    li.append(sw, name, num);
+    return li;
+  }
+
+  // ---- server calls --------------------------------------------------------
+  async function loadModels() {
+    try {
+      const info = await (await fetch("/api/models")).json();
+      $("sDevice").textContent = info.device.toUpperCase();
+      for (const m of info.models) state.models[m.name] = m;
+      $("models").replaceChildren(...info.models.map((m) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.model = m.name;
+        b.dataset.license = m.license;
+        b.title = `${m.class}, ${m.resolution}×${m.resolution} input, ${m.license}` +
+          (m.downloaded ? "" : ". Weights not downloaded yet; they are fetched on first use");
+        b.append(m.label);
+        const small = document.createElement("small"); small.textContent = m.resolution + " px";
+        b.append(small);
+        b.addEventListener("click", () => selectModel(m.name));
+        return b;
+      }));
+      selectModel(info.default);
+    } catch {
+      setMessage("Could not reach the server. Is it still running?", true);
+    }
+  }
+
+  function selectModel(name) {
+    if (name === state.model) return;
+    state.model = name;
+    for (const b of $("models").children) b.setAttribute("aria-pressed", String(b.dataset.model === name));
+    $("sModel").textContent = state.models[name].label;
+    $("license").hidden = state.models[name].license !== "PML-1.0";
+    if (state.file) detect();
+  }
+
+  async function detect() {
+    const token = ++state.request;
+    stage.classList.add("busy");
+    setMessage("");
+    const body = new FormData();
+    body.append("file", state.file);
+    body.append("model", state.model);
+    body.append("threshold", SERVER_THRESHOLD);
+    try {
+      const res = await fetch("/api/detect", { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (token !== state.request) return; // a newer request superseded this one
+      if (!res.ok) throw new Error(data.detail || `Server error (${res.status})`);
+      state.result = data;
+      state.hover = -1;
+      renderPanel();
+      draw();
+    } catch (err) {
+      if (token !== state.request) return;
+      state.result = null;
+      renderPanel();
+      draw();
+      $("sTime").textContent = $("sCount").textContent = "–";
+      setMessage(err instanceof TypeError ? "Could not reach the server. Is it still running?" : err.message, true);
+    } finally {
+      if (token === state.request) stage.classList.remove("busy");
+    }
+  }
+
+  async function setFile(file) {
+    if (!file) return;
+    let image;
+    try {
+      // createImageBitmap applies EXIF orientation, matching what the server does.
+      image = await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch {
+      setMessage("That file is not an image this browser can show.", true);
+      return;
+    }
+    state.file = file;
+    state.image = image;
+    state.result = null;
+    stage.classList.add("has-image");
+    renderPanel();
+    draw();
+    detect();
+  }
+
+  // ---- events --------------------------------------------------------------
+  $("pick").addEventListener("click", () => $("file").click());
+  $("empty").addEventListener("click", () => $("file").click());
+  $("file").addEventListener("change", (e) => { setFile(e.target.files[0]); e.target.value = ""; });
+  $("threshold").addEventListener("input", () => {
+    $("thresholdValue").textContent = pct(threshold());
+    state.hover = -1;
+    renderPanel();
+    draw();
+  });
+  for (const type of ["dragenter", "dragover"]) {
+    window.addEventListener(type, (e) => { e.preventDefault(); stage.classList.add("dragover"); });
+  }
+  window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) stage.classList.remove("dragover"); });
+  window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    stage.classList.remove("dragover");
+    setFile(e.dataTransfer.files[0]);
+  });
+  window.addEventListener("paste", (e) => {
+    const item = [...e.clipboardData.items].find((i) => i.type.startsWith("image/"));
+    if (item) setFile(item.getAsFile());
+  });
+  new ResizeObserver(draw).observe(stage);
+
+  loadModels();
+})();
+</script>
+</body>
+</html>

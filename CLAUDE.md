@@ -54,3 +54,19 @@ The package (`rfdetr_coreml/`) is a monkey-patch overlay on the upstream `rfdetr
 ## Dependencies
 
 Requires macOS for CoreML conversion. Python >=3.10, torch >=2.4.0, coremltools >=8.0, rfdetr >=1.5.0. Tested with Python 3.12, torch 2.7.0, coremltools 8.1, rfdetr 1.5.1.
+
+## Web demo (`webapp/`)
+
+A local FastAPI app that runs the PyTorch detection models (Atto, Femto, Pico, Nano, Small, Medium, XL, 2XL) on an uploaded image. It is independent of the CoreML export code.
+
+```bash
+uv venv webapp/.venv --python 3.12
+uv pip install --python webapp/.venv/bin/python -r webapp/requirements.txt
+webapp/.venv/bin/python webapp/download_models.py
+webapp/.venv/bin/python -m uvicorn server:app --app-dir webapp --host 127.0.0.1 --port 8000
+```
+
+- **Two venvs, on purpose**: `webapp/.venv` has the latest rfdetr (1.12+); the root `.venv` stays on rfdetr 1.6.2 for CoreML export. rfdetr 1.9+ moved the model classes and removed `rfdetr.util` / `rfdetr.deploy`, which `rfdetr_coreml/` patches. Never install `webapp/requirements.txt` into the root venv.
+- `webapp/models.py` sets `RF_HOME` to `webapp/models/` and must be imported before `rfdetr`. Weights there are gitignored.
+- `MODELS` in `webapp/models.py` is the single registry (label, class, resolution, weights file, license); the server and UI read from it.
+- Atto, Femto, Pico, XL and 2XL are PML-1.0 models from `rfdetr_plus` (the `rfdetr[plus]` extra). No Roboflow API key is needed for any model: all weights download publicly. The PML license itself requires a Roboflow platform plan in good standing.
